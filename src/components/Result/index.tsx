@@ -14,9 +14,9 @@ interface Props {
 }
 
 const ICON_MAP = {
-  [ResultStatus.PERFECT]: <SmileFilled />,
-  [ResultStatus.SUCCESS]: <MehFilled />,
-  [ResultStatus.ERROR]: <FrownFilled />,
+  [ResultStatus.PERFECT]: <SmileFilled style={{ color: '#a0d911' }} />,
+  [ResultStatus.SUCCESS]: <MehFilled style={{ color: '#fa8c16' }} />,
+  [ResultStatus.ERROR]: <FrownFilled style={{ color: '#f5222d' }} />,
 }
 
 const Result: React.FC<Props> = ({ result = ResultStatus.SUCCESS, style, description }) => {

@@ -24,8 +24,8 @@ enum SHEET_NAME {
 
 // 分光器端口状态
 enum PortStatus {
-  ON,
   OFF,
+  ON,
 }
 
 // 分光器端口
@@ -49,14 +49,19 @@ interface MachinRoom {
   splitters: Map<string, Splitter>
 }
 
-const formatSheetData = (s: WorkSheet): Map<string, MachinRoom> => {
+const formatSheetData = (
+  s: WorkSheet,
+  columns: [string, string, string, string, string],
+  initRow = 3
+): Map<string, MachinRoom> => {
+  const [a, b, c, d, e] = columns
   const map = new Map<string, MachinRoom>()
   const maxLength = parseInt(s['!ref']?.split(':')?.[1]?.replace?.(/[a-z]/gi, '') ?? '0', 10)
 
-  if (maxLength <= 2) return map
+  if (maxLength <= initRow) return map
 
-  for (let i = 3; i <= maxLength; i++) {
-    const cell = `C${i}`
+  for (let i = initRow; i <= maxLength; i++) {
+    const cell = `${a}${i}`
     const roomName = Reflect.get(s, cell)?.v ?? ''
 
     if (roomName) {
@@ -66,7 +71,7 @@ const formatSheetData = (s: WorkSheet): Map<string, MachinRoom> => {
       const machinRoom = map.get(roomName)!
       const { splitters } = machinRoom
 
-      const splitterName = Reflect.get(s, `E${i}`)?.v ?? ''
+      const splitterName = Reflect.get(s, `${b}${i}`)?.v ?? ''
 
       if (splitterName) {
         if (!splitters.has(splitterName)) {
@@ -79,12 +84,12 @@ const formatSheetData = (s: WorkSheet): Map<string, MachinRoom> => {
         const splitter = splitters.get(splitterName)!
         const { ports } = splitter
 
-        const portName = Reflect.get(s, `F${i}`)?.v ?? ''
+        const portName = Reflect.get(s, `${c}${i}`)?.v ?? ''
 
         if (portName) {
           if (!ports.has(portName)) {
-            const next = Reflect.get(s, `H${i}`)?.v || ''
-            const status = Reflect.get(s, `G${i}`)?.v === '在用' ? PortStatus.ON : PortStatus.OFF
+            const next = Reflect.get(s, `${d}${i}`)?.v?.trim() || ''
+            const status = Reflect.get(s, `${e}${i}`)?.v?.trim() === '空闲' ? PortStatus.OFF : PortStatus.ON
             ports.set(portName, { name: portName, belongTo: splitter, status, next })
           }
         }
@@ -95,31 +100,47 @@ const formatSheetData = (s: WorkSheet): Map<string, MachinRoom> => {
   return map
 }
 
-const diffEquipmentData = (originData: Map<string, MachinRoom>, o: Map<string, MachinRoom>): JSX.Element[] => {
-  return Array.from(originData.values()).map((h) => {
-    const machiRoomName = h.name
-    const splitterCount = h.splitters.size
-    let [onCount, offCount] = [0, 0]
-    const portCount = Array.from(h.splitters.values()).reduce((total, item) => {
-      item.ports.forEach((item) => {
-        if (item.status === PortStatus.ON) {
-          onCount++
-        } else {
-          offCount++
-        }
-      })
-      return total + item.ports.size
-    }, 0)
+const countSplitterPorts = (handleSplitters: Map<string, Splitter>, originSplitters: Map<string, Splitter>) => {
+  let [on, off, all, right, wrong] = [0, 0, 0, 0, 0]
 
-    return (
-      <>
-        <b>{machiRoomName}</b>合计{splitterCount}台分光器，合计{portCount}个端口，其中在用<b>{onCount}</b>
-        个端口，空闲端口
-        <b>{offCount}</b>
-        匹配系统录入数据，其中录入准确XX个端口（第三点的匹配结果），录入有误XX个端口（第三点的匹配结果）。
-      </>
-    )
-  })
+  for (const [key, handleSplitter] of handleSplitters) {
+    all += handleSplitter.ports.size
+    const originSplitter = originSplitters.get(key)
+    if (handleSplitter.name !== originSplitter?.name) {
+      wrong += handleSplitter.ports.size
+      continue
+    }
+
+    for (const [key, handlePort] of handleSplitter.ports) {
+      const originPort = originSplitter.ports.get(key)
+      if (handlePort.status === PortStatus.ON) {
+        on++
+      } else {
+        off++
+      }
+      if (handlePort.name !== originPort?.name) {
+        wrong++
+        continue
+      }
+      if (handlePort.status !== originPort?.status) {
+        wrong++
+        continue
+      }
+      if (handlePort.next !== originPort?.next) {
+        wrong++
+        continue
+      }
+      right++
+    }
+  }
+
+  return {
+    on,
+    off,
+    all,
+    right,
+    wrong,
+  }
 }
 
 /**
@@ -136,17 +157,16 @@ const diffEquipmentData = (originData: Map<string, MachinRoom>, o: Map<string, M
     匹配系统录入数据，其中录入准确XX个端口（第三点的匹配结果），录入有误XX个端口（第三点的匹配结果）。
  */
 function App() {
-  const [describtipn, setDescription] = useState<JSX.Element[]>([])
+  const [description, setDescription] = useState<JSX.Element[]>([])
+  const [result, setResult] = useState<ResultStatus>(ResultStatus.PERFECT)
 
   const analyzeWorkBook: AnalyzeWorkBook = (workBook) => {
     const handleSheet = workBook.Sheets[SHEET_NAME.handle]
     const originSheet = workBook.Sheets[SHEET_NAME.origin]
 
-    const handleData = formatSheetData(handleSheet)
-    const originData = formatSheetData(originSheet)
-    const description = diffEquipmentData(handleData, originData)
-    setDescription(description)
-    //
+    const handleData = formatSheetData(handleSheet, ['C', 'E', 'F', 'H', 'G'])
+    const originData = formatSheetData(originSheet, ['A', 'B', 'C', 'E', 'N'], 2)
+    diffEquipmentData(handleData, originData)
 
     return {
       handleData,
@@ -154,11 +174,50 @@ function App() {
     }
   }
 
-  const handleUploadFile: HandleUploadFile = (w) => {
-    // const { handleData, originData } = analyzeWorkBook(w)
-    analyzeWorkBook(w)
+  const diffEquipmentData = (handleData: Map<string, MachinRoom>, originData: Map<string, MachinRoom>): void => {
+    let res = []
 
-    console.log('🤔 ~ App ~ w:', w)
+    for (const [key, handleMachineRoom] of handleData) {
+      const originMachineRoom = originData.get(key)
+      if (!originMachineRoom) {
+        res.push(
+          <div>
+            <b>{handleMachineRoom.name}</b>录入有误！
+          </div>
+        )
+        break
+      }
+
+      const machiRoomName = handleMachineRoom.name
+      const splitterCount = handleMachineRoom.splitters.size
+      const { on, off, all, right, wrong } = countSplitterPorts(
+        handleMachineRoom.splitters,
+        originMachineRoom.splitters
+      )
+      if (right === all) {
+        setResult(ResultStatus.PERFECT)
+      } else if (wrong > right) {
+        setResult(ResultStatus.ERROR)
+      } else {
+        setResult(ResultStatus.SUCCESS)
+      }
+
+      res.push(
+        <div>
+          <b>{machiRoomName}</b>合计{splitterCount}台分光器，合计<b>{all}</b>个端口，其中<b>{on}</b>
+          个在用端口，<b>{off}</b>个空闲端口
+          <div>
+            匹配系统录入数据，其中录入准确<b>{right}</b>个端口，录入有误<b>{wrong}</b>个端口。
+          </div>
+        </div>
+      )
+    }
+
+    setDescription(res)
+  }
+
+  const handleUploadFile: HandleUploadFile = (w) => {
+    analyzeWorkBook(w)
   }
 
   const handleReset = () => {
@@ -190,13 +249,8 @@ function App() {
   return (
     <>
       <Flex gap="middle">
-        <UploadBtn
-          style={{ width: '380px' }}
-          onUpload={handleUploadFile}
-          onCheck={handleCheckFile}
-          onReset={handleReset}
-        />
-        <Result style={{ width: '100%' }} result={ResultStatus.PERFECT} description={describtipn} />
+        <UploadBtn onUpload={handleUploadFile} onCheck={handleCheckFile} onReset={handleReset} />
+        <Result style={{ width: '100%' }} result={result} description={description} />
       </Flex>
     </>
   )
